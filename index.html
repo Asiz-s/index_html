@@ -118,9 +118,49 @@ try{
   const xt=x.slice(0,cut),yt=vals.slice(0,cut),lf=linearFit(xt,yt),ef=expFit(xt,yt),K=num($('K').value),gf=logisticFit(xt,yt,K);
   const models=[{name:'선형',type:'lin',a:lf.slope,b:lf.intercept},{name:'지수',type:'exp',A:ef.A,k:ef.k},{name:'로지스틱',type:'log',A:gf.A,k:gf.k,K:gf.K}];
   const labels=months;
-  makeChart('modelChart','line',{labels,datasets:[{label:'실제 인구',data:vals,borderWidth:3,pointRadius:2},...models.map(m=>({label:m.name,data:x.map(t=>pred(m,t)),borderWidth:2,pointRadius:0}))]},{responsive:true,plugins:{legend:{position:'bottom'}}});
+  const modelStyles={
+    '선형':{borderWidth:3,pointRadius:0,borderDash:[]},
+    '지수':{borderWidth:4,pointRadius:2,borderDash:[8,5]},
+    '로지스틱':{borderWidth:4,pointRadius:2,borderDash:[3,4]}
+  };
+  makeChart('modelChart','line',{
+    labels,
+    datasets:[
+      {label:'실제 인구',data:vals,borderWidth:4,pointRadius:2},
+      ...models.map(m=>({
+        label:m.name+' 모델',
+        data:x.map(t=>pred(m,t)),
+        ...modelStyles[m.name]
+      }))
+    ]
+  },{
+    responsive:true,
+    interaction:{mode:'index',intersect:false},
+    plugins:{legend:{position:'bottom'}},
+    scales:{y:{ticks:{callback:v=>Number(v).toLocaleString()}}}
+  });
   const actualRate=vals.slice(1).map((v,i)=>v-vals[i]);
-  makeChart('rateChart','line',{labels:months.slice(1),datasets:[{label:'실제 구간 변화율 (명/월)',data:actualRate,borderWidth:2,pointRadius:2},...models.map(m=>({label:m.name+' 미분값',data:x.slice(1).map(t=>{if(m.type==='lin')return m.a;if(m.type==='exp')return m.k*pred(m,t);const p=pred(m,t);return m.k*p*(1-p/m.K);}),borderWidth:2,pointRadius:0}))]},{responsive:true,plugins:{legend:{position:'bottom'}}});
+  makeChart('rateChart','line',{
+    labels:months.slice(1),
+    datasets:[
+      {label:'실제 구간 변화율 (명/월)',data:actualRate,borderWidth:3,pointRadius:2},
+      ...models.map(m=>({
+        label:m.name+' 미분값',
+        data:x.slice(1).map(t=>{
+          if(m.type==='lin')return m.a;
+          if(m.type==='exp')return m.k*pred(m,t);
+          const p=pred(m,t);return m.k*p*(1-p/m.K);
+        }),
+        borderWidth:3,
+        pointRadius:0,
+        borderDash:m.type==='exp'?[8,5]:m.type==='log'?[3,4]:[]
+      }))
+    ]
+  },{
+    responsive:true,
+    interaction:{mode:'index',intersect:false},
+    plugins:{legend:{position:'bottom'}}
+  });
   let html='<table><tr><th>모델</th><th>학습 MAE</th><th>검증 MAE</th><th>전체 MAE</th><th>전체 MAPE</th><th>누적 절대오차</th></tr>';const errs={};
   models.forEach(m=>{const p=x.map(t=>pred(m,t)),tr=p.slice(0,cut),va=p.slice(cut),maeTr=mae(yt,tr),maeVa=mae(vals.slice(cut),va),allMae=mae(vals,p),allMape=mape(vals,p),area=cumulativeAbs(x,vals,p);errs[m.name]={p};html+=`<tr><td>${m.name}</td><td>${maeTr.toLocaleString(undefined,{maximumFractionDigits:1})}</td><td>${maeVa.toLocaleString(undefined,{maximumFractionDigits:1})}</td><td>${allMae.toLocaleString(undefined,{maximumFractionDigits:1})}</td><td>${Number.isFinite(allMape)?allMape.toFixed(4)+'%':'-'}</td><td>${area.toLocaleString(undefined,{maximumFractionDigits:0})}</td></tr>`;});
   html+='</table><p class="small">※ 앱은 오차 지표만으로 최적 모델을 자동 선택하지 않습니다. 변화율의 크기와 모양, 누적오차, 검증 오차를 함께 해석하세요.</p>';$('metrics').innerHTML=html;
