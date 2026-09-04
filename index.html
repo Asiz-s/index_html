@@ -40,8 +40,16 @@ table{border-collapse:collapse;width:100%;font-size:13px}th,td{border:1px solid 
 <div id="msg"></div>
 </div>
 
-<div class="card"><h2>3. 실제 인구와 모델 비교</h2><canvas id="modelChart"></canvas></div>
-<div class="card"><h2>4. 변화율 분석</h2><div class="formula">실제 데이터의 구간 변화율: (P<sub>i+1</sub> − P<sub>i</sub>) / (t<sub>i+1</sub> − t<sub>i</sub>)</div><canvas id="rateChart"></canvas></div>
+<div class="card"><h2>3. 실제 인구와 모델 비교</h2><canvas id="modelChart"></canvas>
+    <div style="height:18px"></div>
+    <h4>모델별 예측 차이 (모델값 − 실제값)</h4>
+    <p class="small">세 모델의 차이가 작아도 확대해서 비교할 수 있도록 실제값과의 차이를 0을 기준으로 표시합니다.</p>
+    <canvas id="modelDiffChart"></canvas></div>
+<div class="card"><h2>4. 변화율 분석</h2><div class="formula">실제 데이터의 구간 변화율: (P<sub>i+1</sub> − P<sub>i</sub>) / (t<sub>i+1</sub> − t<sub>i</sub>)</div><canvas id="rateChart"></canvas>
+    <div style="height:18px"></div>
+    <h4>미분값 차이 (모델 미분값 − 실제 구간 변화율)</h4>
+    <p class="small">0을 기준으로 차이를 확대해 각 모델의 변화율 차이를 비교합니다.</p>
+    <canvas id="rateDiffChart"></canvas></div>
 <div class="card"><h2>5. 오차 비교</h2><div id="metrics"></div><canvas id="errorChart"></canvas></div>
 <div class="card"><h2>6. 모델의 수학적 의미</h2><div class="grid">
 <div><h3>선형</h3><div class="formula">P(t)=at+b<br>P′(t)=a</div><p>일정한 변화율을 가정합니다.</p></div>
@@ -140,6 +148,28 @@ try{
     scales:{y:{ticks:{callback:v=>Number(v).toLocaleString()}}}
   });
   const actualRate=vals.slice(1).map((v,i)=>v-vals[i]);
+  makeChart('modelDiffChart','line',{
+    labels,
+    datasets:models.map(m=>({
+      label:m.name+' − 실제',
+      data:x.map((t,i)=>pred(m,t)-vals[i]),
+      borderWidth:3,
+      pointRadius:0,
+      borderDash:m.type==='exp'?[8,5]:m.type==='log'?[3,4]:[]
+    })).concat([{
+      label:'차이 0',
+      data:x.map(()=>0),
+      borderWidth:2,
+      pointRadius:0,
+      borderDash:[2,3]
+    }])
+  },{
+    responsive:true,
+    interaction:{mode:'index',intersect:false},
+    plugins:{legend:{position:'bottom'}},
+    scales:{y:{ticks:{callback:v=>Number(v).toLocaleString()}}}
+  });
+
   makeChart('rateChart','line',{
     labels:months.slice(1),
     datasets:[
@@ -164,6 +194,32 @@ try{
   let html='<table><tr><th>모델</th><th>학습 MAE</th><th>검증 MAE</th><th>전체 MAE</th><th>전체 MAPE</th><th>누적 절대오차</th></tr>';const errs={};
   models.forEach(m=>{const p=x.map(t=>pred(m,t)),tr=p.slice(0,cut),va=p.slice(cut),maeTr=mae(yt,tr),maeVa=mae(vals.slice(cut),va),allMae=mae(vals,p),allMape=mape(vals,p),area=cumulativeAbs(x,vals,p);errs[m.name]={p};html+=`<tr><td>${m.name}</td><td>${maeTr.toLocaleString(undefined,{maximumFractionDigits:1})}</td><td>${maeVa.toLocaleString(undefined,{maximumFractionDigits:1})}</td><td>${allMae.toLocaleString(undefined,{maximumFractionDigits:1})}</td><td>${Number.isFinite(allMape)?allMape.toFixed(4)+'%':'-'}</td><td>${area.toLocaleString(undefined,{maximumFractionDigits:0})}</td></tr>`;});
   html+='</table><p class="small">※ 앱은 오차 지표만으로 최적 모델을 자동 선택하지 않습니다. 변화율의 크기와 모양, 누적오차, 검증 오차를 함께 해석하세요.</p>';$('metrics').innerHTML=html;
+  makeChart('rateDiffChart','line',{
+    labels:months.slice(1),
+    datasets:models.map(m=>({
+      label:m.name+' 미분 − 실제 변화율',
+      data:x.slice(1).map((t,j)=>{
+        const p=pred(m,t);
+        const d=m.type==='lin'?m.a:m.type==='exp'?m.k*p:(m.k*p*(1-p/m.K));
+        return d-actualRate[j];
+      }),
+      borderWidth:3,
+      pointRadius:0,
+      borderDash:m.type==='exp'?[8,5]:m.type==='log'?[3,4]:[]
+    })).concat([{
+      label:'차이 0',
+      data:months.slice(1).map(()=>0),
+      borderWidth:2,
+      pointRadius:0,
+      borderDash:[2,3]
+    }])
+  },{
+    responsive:true,
+    interaction:{mode:'index',intersect:false},
+    plugins:{legend:{position:'bottom'}},
+    scales:{y:{ticks:{callback:v=>Number(v).toLocaleString()}}}
+  });
+
   makeChart('errorChart','line',{labels,datasets:models.map(m=>({label:m.name+' 절대오차',data:errs[m.name].p.map((v,i)=>Math.abs(vals[i]-v)),borderWidth:2,pointRadius:0}))},{responsive:true,plugins:{legend:{position:'bottom'}}});
   let c='<table><tr><th>시점</th><th>실제값</th>'+models.map(m=>`<th>${m.name}</th>`).join('')+'</tr>';
   [0,Math.floor(n/2),n-1].forEach(i=>{
