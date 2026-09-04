@@ -1,0 +1,200 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>미적분Ⅰ 인구 데이터 모델 비교</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<style>
+body{font-family:Arial,"Noto Sans KR",sans-serif;max-width:1200px;margin:0 auto;padding:24px;line-height:1.6;background:#f7f7f7}
+h1,h2{margin-bottom:8px}.card{background:white;border-radius:14px;padding:20px;margin:16px 0;box-shadow:0 2px 10px #0001}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:12px}
+label{font-weight:bold;display:block;margin-top:8px}input,select,button{padding:9px;border:1px solid #bbb;border-radius:8px;font-size:15px}
+button{cursor:pointer;background:#222;color:white}.muted{color:#666}.error{color:#b00020;font-weight:bold}.ok{color:#176b3a;font-weight:bold}
+table{border-collapse:collapse;width:100%;font-size:13px}th,td{border:1px solid #ddd;padding:6px;text-align:right}th{background:#eee}
+canvas{max-height:430px}.formula{font-family:serif;font-size:18px;background:#f1f1f1;padding:10px;border-radius:8px}
+.small{font-size:13px}.pill{display:inline-block;padding:3px 8px;border:1px solid #bbb;border-radius:20px;margin:2px}
+</style>
+</head>
+<body>
+<h1>미적분Ⅰ: 변화율·누적량을 이용한 실제 데이터 모델 비교</h1>
+<p class="muted">주민등록 인구 월간 CSV를 이용해 선형·지수·로지스틱 모델을 비교합니다. 앱은 최적 모델을 자동으로 결정하지 않습니다.</p>
+
+<div class="card">
+<h2>1. 데이터 입력</h2>
+<input type="file" id="file" accept=".csv">
+<div class="grid">
+<div><label>행정구역</label><select id="region"></select></div>
+<div><label>학습 데이터 비율: <span id="ratioText">80</span>%</label>
+<input id="ratio" type="range" min="50" max="90" value="80"></div>
+<div><label>로지스틱 K (수용한계)</label><input id="K" type="number" value="60000000" step="100000"></div>
+</div>
+<p id="status" class="muted">CSV를 업로드하세요.</p>
+</div>
+
+<div class="card">
+<h2>2. 분석 설정</h2>
+<p class="small">현재 CSV 구조에서는 <b>행정구역</b> 행을 선택하고 각 월의 <b>총인구수</b> 열을 자동 추출합니다.</p>
+<button id="run">분석 실행</button>
+<div id="msg"></div>
+</div>
+
+<div class="card">
+<h2>3. 실제 인구와 모델 비교</h2>
+<canvas id="modelChart"></canvas>
+</div>
+
+<div class="card">
+<h2>4. 변화율 분석</h2>
+<div class="formula">실제 데이터의 구간 변화율: (P<sub>i+1</sub> − P<sub>i</sub>) / (t<sub>i+1</sub> − t<sub>i</sub>)</div>
+<canvas id="rateChart"></canvas>
+</div>
+
+<div class="card">
+<h2>5. 오차 비교</h2>
+<div id="metrics"></div>
+<canvas id="errorChart"></canvas>
+</div>
+
+<div class="card">
+<h2>6. 모델의 수학적 의미</h2>
+<div class="grid">
+<div><h3>선형</h3><div class="formula">P(t)=at+b<br>P′(t)=a</div><p>일정한 변화율을 가정합니다.</p></div>
+<div><h3>지수</h3><div class="formula">P(t)=Ae<sup>kt</sup><br>P′(t)=kAe<sup>kt</sup></div><p>현재 크기에 비례하는 변화율을 가정합니다.</p></div>
+<div><h3>로지스틱</h3><div class="formula">P(t)=K/(1+Ae<sup>−kt</sup>)<br>P′(t)=kP(t)(1−P(t)/K)</div><p>성장 한계 K에 가까워질수록 변화율이 줄어드는 모델입니다.</p></div>
+</div>
+</div>
+
+<div class="card">
+<h2>7. 직접 검산</h2>
+<p>아래에서 실제 데이터 3개를 골라 모델 계산값과 비교할 수 있습니다.</p>
+<div id="check"></div>
+</div>
+
+<script>
+let rows=[], months=[], regionRows=[], charts={};
+
+function parseCSV(text){
+  const lines=text.replace(/^\uFEFF/,'').split(/\r?\n/).filter(x=>x.trim());
+  function split(s){
+    let a=[],cur='',q=false;
+    for(let i=0;i<s.length;i++){let c=s[i];
+      if(c=='"'){if(q&&s[i+1]=='"'){cur+='"';i++;}else q=!q;}
+      else if(c==','&&!q){a.push(cur);cur='';} else cur+=c;
+    } a.push(cur); return a;
+  }
+  return lines.map(split);
+}
+function num(x){return Number(String(x).replace(/,/g,'').trim());}
+function regression(x,y){
+  const n=x.length, mx=x.reduce((a,b)=>a+b,0)/n, my=y.reduce((a,b)=>a+b,0)/n;
+  let sxx=0,sxy=0; for(let i=0;i<n;i++){sxx+=(x[i]-mx)**2;sxy+=(x[i]-mx)*(y[i]-my);}
+  const slope=sxy/sxx, intercept=my-slope*mx; return {slope,intercept};
+}
+function linearFit(x,y){return regression(x,y);}
+function expFit(x,y){
+  if(y.some(v=>v<=0)) throw Error("지수 모델은 인구가 0보다 큰 데이터에서만 계산할 수 있습니다.");
+  const r=regression(x,y.map(Math.log)); return {A:Math.exp(r.intercept),k:r.slope};
+}
+function logisticFit(x,y,K){
+  if(!(K>0)) throw Error("K는 0보다 큰 값을 입력해야 합니다.");
+  if(y.some(v=>!(v>0&&v<K))) throw Error("로지스틱 변환을 위해 모든 학습 인구값은 0<P<K를 만족해야 합니다. K를 더 크게 설정하세요.");
+  const z=y.map(v=>Math.log(K/v-1));
+  const r=regression(x,z); return {A:Math.exp(r.intercept),k:-r.slope,K};
+}
+function pred(m,t){
+  if(m.type==='lin') return m.a*t+m.b;
+  if(m.type==='exp') return m.A*Math.exp(m.k*t);
+  return m.K/(1+m.A*Math.exp(-m.k*t));
+}
+function mae(actual,p){return actual.reduce((s,v,i)=>s+Math.abs(v-p[i]),0)/actual.length}
+function mape(actual,p){
+  const z=actual.map((v,i)=>v===0?null:Math.abs((v-p[i])/v)*100).filter(v=>v!==null);
+  return z.reduce((a,b)=>a+b,0)/z.length;
+}
+function cumulativeAbs(x,actual,p){
+  let area=0;
+  for(let i=0;i<x.length-1;i++){
+    const e1=Math.abs(actual[i]-p[i]),e2=Math.abs(actual[i+1]-p[i+1]);
+    area+=(e1+e2)/2*(x[i+1]-x[i]);
+  } return area;
+}
+function destroy(k){if(charts[k]) charts[k].destroy();}
+function makeChart(id,type,data,opts){destroy(id);charts[id]=new Chart(document.getElementById(id),{type,data,options:opts});}
+
+document.getElementById('ratio').oninput=e=>document.getElementById('ratioText').textContent=e.target.value;
+
+document.getElementById('file').onchange=e=>{
+  const f=e.target.files[0]; if(!f)return;
+  const reader=new FileReader();
+  reader.onload=ev=>{
+    try{
+      const a=parseCSV(ev.target.result), head=a[0];
+      const regionIdx=head.indexOf('행정구역');
+      const totalCols=head.map((h,i)=>({h,i})).filter(o=>o.h.includes('_총인구수'));
+      if(regionIdx<0||totalCols.length<3) throw Error("행정구역 또는 월별 총인구수 열을 찾지 못했습니다.");
+      months=totalCols.map(o=>o.h.split('_')[0]);
+      regionRows=a.slice(1).filter(r=>r[regionIdx]&&r.length>=head.length);
+      const sel=document.getElementById('region'); sel.innerHTML='';
+      regionRows.forEach((r,i)=>{let o=document.createElement('option');o.value=i;o.textContent=r[regionIdx];sel.appendChild(o);});
+      document.getElementById('status').textContent=`읽기 완료: ${months.length}개월 × ${regionRows.length}개 행정구역`;
+    }catch(err){document.getElementById('status').innerHTML='<span class="error">'+err.message+'</span>'}
+  };
+  reader.readAsText(f,'EUC-KR');
+};
+
+document.getElementById('run').onclick=()=>{
+try{
+  if(!regionRows.length) throw Error("먼저 CSV를 업로드하세요.");
+  const r=regionRows[+document.getElementById('region').value];
+  const vals=[];
+  months.forEach((m,j)=>{
+    const col=(j*6)+1; const v=num(r[col]); if(!Number.isFinite(v)||v<0) throw Error(`${m} 총인구수에 잘못된 값이 있습니다.`);
+    vals.push(v);
+  });
+  const n=vals.length, x=vals.map((_,i)=>i), cut=Math.floor(n*+document.getElementById('ratio').value/100);
+  if(cut<3||n-cut<1) throw Error("학습/검증 데이터가 충분하지 않습니다.");
+  const xt=x.slice(0,cut), yt=vals.slice(0,cut);
+  const lf=linearFit(xt,yt), ef=expFit(xt,yt), K=num(document.getElementById('K').value), gf=logisticFit(xt,yt,K);
+  const models=[
+    {name:'선형',type:'lin',a:lf.slope,b:lf.intercept},
+    {name:'지수',type:'exp',A:ef.A,k:ef.k},
+    {name:'로지스틱',type:'log',A:gf.A,k:gf.k,K:gf.K}
+  ];
+  const colors=undefined;
+  const labels=months;
+  makeChart('modelChart','line',{labels,datasets:[
+    {label:'실제 인구',data:vals,borderWidth:3,pointRadius:2},
+    ...models.map(m=>({label:m.name,data:x.map(t=>pred(m,t)),borderWidth:2,pointRadius:0}))
+  ]},{responsive:true,plugins:{legend:{position:'bottom'}}});
+  const actualRate=vals.slice(1).map((v,i)=>v-vals[i]);
+  makeChart('rateChart','line',{labels:months.slice(1),datasets:[
+    {label:'실제 구간 변화량 (명/월)',data:actualRate,borderWidth:2,pointRadius:2},
+    ...models.map(m=>({label:m.name+' 미분값',data:x.slice(1).map(t=>{
+      if(m.type==='lin')return m.a;
+      if(m.type==='exp')return m.k*pred(m,t);
+      const p=pred(m,t); return m.k*p*(1-p/m.K);
+    }),borderWidth:2,pointRadius:0}))
+  ]},{responsive:true,plugins:{legend:{position:'bottom'}}});
+  let html='<table><tr><th>모델</th><th>학습 MAE</th><th>검증 MAE</th><th>전체 MAE</th><th>전체 MAPE</th><th>누적 절대오차</th></tr>';
+  const errs={};
+  models.forEach(m=>{
+    const p=x.map(t=>pred(m,t)), tr=p.slice(0,cut), va=p.slice(cut);
+    const maeTr=mae(yt,tr), maeVa=mae(vals.slice(cut),va);
+    const allMae=mae(vals,p), allMape=mape(vals,p), area=cumulativeAbs(x,vals,p);
+    errs[m.name]={p,maeTr,maeVa,allMae,allMape,area};
+    html+=`<tr><td>${m.name}</td><td>${maeTr.toLocaleString(undefined,{maximumFractionDigits:1})}</td><td>${maeVa.toLocaleString(undefined,{maximumFractionDigits:1})}</td><td>${allMae.toLocaleString(undefined,{maximumFractionDigits:1})}</td><td>${allMape.toFixed(4)}%</td><td>${area.toLocaleString(undefined,{maximumFractionDigits:0})}</td></tr>`;
+  });
+  html+='</table><p class="small">※ 앱은 오차 지표만으로 최적 모델을 자동 선택하지 않습니다. 변화율의 크기와 모양, 누적오차, 검증 오차를 함께 해석하세요.</p>';
+  document.getElementById('metrics').innerHTML=html;
+  makeChart('errorChart','line',{labels,datasets:models.map(m=>({label:m.name+' 절대오차',data:errs[m.name].p.map((v,i)=>Math.abs(vals[i]-v)),borderWidth:2,pointRadius:0}))},{responsive:true,plugins:{legend:{position:'bottom'}}});
+  let c='<table><tr><th>시점</th><th>실제값</th>'+models.map(m=>`<th>${m.name}</th>`).join('')+'</tr>';
+  [0,Math.floor(n/2),n-1].forEach(i=>{c+=`<tr><td>${months[i]}</td><td>${vals[i].toLocaleString()}</td>`+models.map(m=>`<td>${pred(m,i).toLocaleString(undefined,{maximumFractionDigits:1})}</td>`).join('')+'</tr>`});
+  c+='</table><p class="small">세 점을 손으로 계산할 때는 위 모델식에 해당 t값을 직접 대입해 앱의 값을 확인하면 됩니다.</p>';
+  document.getElementById('check').innerHTML=c;
+  document.getElementById('msg').innerHTML='<p class="ok">분석 완료. 학습/검증 데이터와 세 모델의 결과를 비교해 보세요.</p>';
+}catch(err){document.getElementById('msg').innerHTML='<p class="error">계산 오류: '+err.message+'</p>'}
+};
+</script>
+</body>
+</html>
