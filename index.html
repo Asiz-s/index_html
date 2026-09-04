@@ -85,7 +85,7 @@ $('file').onchange=async e=>{
     const a=parseCSV(text); if(!a.length)throw Error('CSV 내용이 비어 있습니다.');
     const head=a[0].map(v=>String(v).trim());
     const regionIdx=head.findIndex(h=>h==='행정구역');
-    const totalCols=head.map((h,i)=>({h,i})).filter(o=>/(_총인구수|총인구수)$/.test(o.h));
+    totalCols=head.map((h,i)=>({h,i})).filter(o=>/(_총인구수|총인구수)$/.test(o.h));
     if(regionIdx<0)throw Error('첫 행에서 "행정구역" 열을 찾지 못했습니다.');
     if(totalCols.length<3)throw Error('월별 "_총인구수" 열을 3개 이상 찾지 못했습니다. CSV가 주민등록 인구 월간 형식인지 확인하세요.');
     months=totalCols.map(o=>o.h.replace(/_총인구수$/,'').trim());
